@@ -111,7 +111,10 @@ public class MainActivity extends Activity implements SensorEventListener {
             SensorManager.getOrientation(rotationMatrix, orientation);
             float pitch = orientation[1];
             float roll = orientation[2];
-            earthView.renderer.setTilt(roll / 0.75f, -pitch / 0.75f);
+            float horizontal = clamp(roll / 0.75f, -1f, 1f);
+            float vertical = clamp(-pitch / 0.75f, -1f, 1f);
+            float zoomSignal = clamp((-pitch * 0.85f) + (Math.abs(roll) * 0.25f), -1f, 1f);
+            earthView.renderer.setSensorInput(horizontal, vertical, zoomSignal);
         } else if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
             earthView.renderer.addGyro(event.values[1] * 0.018f, event.values[0] * 0.018f);
         }
@@ -123,6 +126,10 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private static float clamp(float value, float min, float max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private final class EarthView extends View {
