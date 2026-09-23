@@ -30,11 +30,11 @@ jobs:
       - name: Generate Earth image assets
         run: python scripts/generate_assets.py
 
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses >/dev/null || true
-
-      - name: Install Android API 35
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Configure Android SDK
+        run: |
+          SDKMANAGER=/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
