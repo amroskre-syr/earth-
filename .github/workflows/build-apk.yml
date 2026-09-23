@@ -32,6 +32,9 @@ jobs:
       - name: Install image tooling
         run: python -m pip install --upgrade pillow numpy
 
+      - name: Apply original-video reference patch
+        run: python scripts/reference_v4_patch.py
+
       - name: Generate reference-matched graphics
         run: python scripts/generate_assets.py
 
