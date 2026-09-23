@@ -69,7 +69,10 @@ public class EarthWallpaperService extends WallpaperService {
                 SensorManager.getOrientation(rotationMatrix, orientation);
                 float pitch = orientation[1];
                 float roll = orientation[2];
-                renderer.setTilt(roll / 0.75f, -pitch / 0.75f);
+                float horizontal = clamp(roll / 0.75f, -1f, 1f);
+                float vertical = clamp(-pitch / 0.75f, -1f, 1f);
+                float zoomSignal = clamp((-pitch * 0.85f) + (Math.abs(roll) * 0.25f), -1f, 1f);
+                renderer.setSensorInput(horizontal, vertical, zoomSignal);
             } else if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
                 renderer.addGyro(event.values[1] * 0.018f, event.values[0] * 0.018f);
             }
@@ -102,6 +105,10 @@ public class EarthWallpaperService extends WallpaperService {
 
             handler.removeCallbacks(drawFrame);
             handler.postDelayed(drawFrame, 33L);
+        }
+
+        private float clamp(float value, float min, float max) {
+            return Math.max(min, Math.min(max, value));
         }
     }
 }
