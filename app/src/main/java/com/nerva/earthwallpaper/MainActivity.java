@@ -45,7 +45,9 @@ public class MainActivity extends Activity implements SensorEventListener, Chore
 
         FrameLayout root = new FrameLayout(this);
         preview = new PreviewView();
-        root.addView(preview, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        root.addView(preview, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
 
         Button apply = new Button(this);
         apply.setText("تعيين الخلفية المتحركة");
@@ -53,6 +55,7 @@ public class MainActivity extends Activity implements SensorEventListener, Chore
         apply.setTextSize(16f);
         apply.setAllCaps(false);
         apply.setPadding(dp(24), dp(12), dp(24), dp(12));
+
         GradientDrawable buttonBg = new GradientDrawable();
         buttonBg.setColor(Color.argb(210, 5, 18, 32));
         buttonBg.setCornerRadius(dp(26));
@@ -68,12 +71,14 @@ public class MainActivity extends Activity implements SensorEventListener, Chore
 
         apply.setOnClickListener(v -> {
             Intent intent = new Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER);
-            intent.putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
+            intent.putExtra(
+                    WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
                     new ComponentName(this, EarthWallpaperService.class));
             startActivity(intent);
         });
 
         setContentView(root);
+
         sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
         sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
         if (sensor == null) sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
@@ -87,7 +92,12 @@ public class MainActivity extends Activity implements SensorEventListener, Chore
     protected void onResume() {
         super.onResume();
         running = true;
-        if (sensor != null) sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME);
+        calibrated = false;
+        gyroX = 0f;
+        gyroY = 0f;
+        if (sensor != null) {
+            sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME);
+        }
         Choreographer.getInstance().postFrameCallback(this);
     }
 
@@ -109,31 +119,40 @@ public class MainActivity extends Activity implements SensorEventListener, Chore
     @Override
     public void onSensorChanged(SensorEvent event) {
         if (event.sensor != sensor) return;
+
         if (!gyroFallback) {
             SensorManager.getRotationMatrixFromVector(matrix, event.values);
             SensorManager.getOrientation(matrix, orientation);
             float pitch = orientation[1];
             float roll = orientation[2];
+
             if (!calibrated) {
                 neutralPitch = pitch;
                 neutralRoll = roll;
                 calibrated = true;
                 return;
             }
+
             float deltaPitch = normalize(pitch - neutralPitch);
             float deltaRoll = normalize(roll - neutralRoll);
-            preview.renderer.setSensorInput(
-                    clamp(-deltaRoll / .24f, -1f, 1f),
-                    clamp(deltaPitch / .24f, -1f, 1f),
-                    clamp(-deltaPitch / .35f, -1f, 1f));
+            float x = clamp(-deltaRoll / .24f, -1f, 1f);
+            float y = clamp(deltaPitch / .24f, -1f, 1f);
+
+            // Keep preview behavior exactly the same as the actual wallpaper.
+            preview.renderer.setSensorInput(x, y, -y * .65f);
         } else {
-            gyroX = (gyroX + event.values[1] * .01f) * .992f;
-            gyroY = (gyroY + event.values[0] * .01f) * .992f;
-            preview.renderer.setSensorInput(clamp(gyroX, -1f, 1f), clamp(gyroY, -1f, 1f), 0f);
+            gyroX = (gyroX + event.values[1] * .010f) * .992f;
+            gyroY = (gyroY + event.values[0] * .010f) * .992f;
+            preview.renderer.setSensorInput(
+                    clamp(gyroX, -1f, 1f),
+                    clamp(gyroY, -1f, 1f),
+                    0f);
         }
     }
 
-    @Override public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {
+    }
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
@@ -151,13 +170,27 @@ public class MainActivity extends Activity implements SensorEventListener, Chore
 
     private final class PreviewView extends View {
         final EarthRenderer renderer = new EarthRenderer(MainActivity.this);
-        PreviewView() { super(MainActivity.this); }
-        @Override protected void onDraw(Canvas canvas) { renderer.draw(canvas, getWidth(), getHeight()); }
-        @Override public boolean onTouchEvent(MotionEvent event) {
+
+        PreviewView() {
+            super(MainActivity.this);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            renderer.draw(canvas, getWidth(), getHeight());
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
             boolean handled = renderer.onTouch(event, getWidth());
             if (event.getActionMasked() == MotionEvent.ACTION_UP) performClick();
             return handled || super.onTouchEvent(event);
         }
-        @Override public boolean performClick() { super.performClick(); return true; }
+
+        @Override
+        public boolean performClick() {
+            super.performClick();
+            return true;
+        }
     }
 }
