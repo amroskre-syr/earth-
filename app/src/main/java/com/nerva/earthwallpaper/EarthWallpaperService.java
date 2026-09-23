@@ -5,9 +5,8 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
-import android.os.Handler;
-import android.os.Looper;
 import android.service.wallpaper.WallpaperService;
+import android.view.Choreographer;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 
@@ -17,40 +16,43 @@ public class EarthWallpaperService extends WallpaperService {
         return new EarthEngine();
     }
 
-    private final class EarthEngine extends Engine implements SensorEventListener {
-        private final Handler handler = new Handler(Looper.getMainLooper());
+    private final class EarthEngine extends Engine implements SensorEventListener, Choreographer.FrameCallback {
         private final EarthRenderer renderer = new EarthRenderer(EarthWallpaperService.this);
-        private final float[] rotationMatrix = new float[9];
-        private final float[] orientation = new float[3];
-
-        private final SensorManager sensorManager;
-        private final Sensor rotationSensor;
-        private final Sensor gyroSensor;
-        private final boolean usingRotationVector;
+        private final SensorManager sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+        private Sensor sensor;
+        private boolean gyroFallback;
         private boolean visible;
-
-        private final Runnable drawFrame = this::frame;
+        private boolean framePosted;
+        private boolean calibrated;
+        private float neutralPitch;
+        private float neutralRoll;
+        private final float[] matrix = new float[9];
+        private final float[] orientation = new float[3];
+        private float gyroX;
+        private float gyroY;
 
         EarthEngine() {
-            sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
-            rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
-            gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
-            usingRotationVector = rotationSensor != null;
+            sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
+            if (sensor == null) sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+            if (sensor == null) {
+                sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+                gyroFallback = sensor != null;
+            }
             setTouchEventsEnabled(true);
+            setOffsetNotificationsEnabled(true);
         }
 
         @Override
-        public void onVisibilityChanged(boolean visible) {
-            this.visible = visible;
-            if (visible) {
-                Sensor sensor = usingRotationVector ? rotationSensor : gyroSensor;
+        public void onVisibilityChanged(boolean value) {
+            visible = value;
+            if (value) {
                 if (sensor != null) {
                     sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME);
                 }
-                frame();
+                postFrame();
             } else {
                 sensorManager.unregisterListener(this);
-                handler.removeCallbacks(drawFrame);
+                removeFrame();
             }
         }
 
@@ -59,52 +61,80 @@ public class EarthWallpaperService extends WallpaperService {
             super.onSurfaceDestroyed(holder);
             visible = false;
             sensorManager.unregisterListener(this);
-            handler.removeCallbacks(drawFrame);
+            removeFrame();
+        }
+
+        private void postFrame() {
+            if (!visible || framePosted) return;
+            framePosted = true;
+            Choreographer.getInstance().postFrameCallback(this);
+        }
+
+        private void removeFrame() {
+            if (!framePosted) return;
+            Choreographer.getInstance().removeFrameCallback(this);
+            framePosted = false;
         }
 
         @Override
-        public void onSensorChanged(SensorEvent event) {
-            if (event.sensor.getType() == Sensor.TYPE_ROTATION_VECTOR) {
-                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values);
-                SensorManager.getOrientation(rotationMatrix, orientation);
-                float pitch = orientation[1];
-                float roll = orientation[2];
-                float horizontal = clamp(roll / 0.75f, -1f, 1f);
-                float vertical = clamp(-pitch / 0.75f, -1f, 1f);
-                float zoomSignal = clamp((-pitch * 0.85f) + (Math.abs(roll) * 0.25f), -1f, 1f);
-                renderer.setSensorInput(horizontal, vertical, zoomSignal);
-            } else if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
-                renderer.addGyro(event.values[1] * 0.018f, event.values[0] * 0.018f);
-            }
-        }
-
-        @Override
-        public void onAccuracyChanged(Sensor sensor, int accuracy) {
-        }
-
-        @Override
-        public void onTouchEvent(MotionEvent event) {
-            int width = getResources().getDisplayMetrics().widthPixels;
-            renderer.onTouch(event, width);
-            super.onTouchEvent(event);
-        }
-
-        private void frame() {
+        public void doFrame(long frameTimeNanos) {
+            framePosted = false;
             if (!visible) return;
-
             SurfaceHolder holder = getSurfaceHolder();
             Canvas canvas = null;
             try {
                 canvas = holder.lockCanvas();
-                if (canvas != null) {
-                    renderer.draw(canvas, canvas.getWidth(), canvas.getHeight());
-                }
+                if (canvas != null) renderer.draw(canvas, canvas.getWidth(), canvas.getHeight());
             } finally {
                 if (canvas != null) holder.unlockCanvasAndPost(canvas);
             }
+            postFrame();
+        }
 
-            handler.removeCallbacks(drawFrame);
-            handler.postDelayed(drawFrame, 33L);
+        @Override
+        public void onSensorChanged(SensorEvent event) {
+            if (event.sensor != sensor) return;
+            if (!gyroFallback) {
+                SensorManager.getRotationMatrixFromVector(matrix, event.values);
+                SensorManager.getOrientation(matrix, orientation);
+                float pitch = orientation[1];
+                float roll = orientation[2];
+                if (!calibrated) {
+                    neutralPitch = pitch;
+                    neutralRoll = roll;
+                    calibrated = true;
+                    return;
+                }
+                float deltaPitch = normalize(pitch - neutralPitch);
+                float deltaRoll = normalize(roll - neutralRoll);
+                float x = clamp(-deltaRoll / .24f, -1f, 1f);
+                float y = clamp(deltaPitch / .24f, -1f, 1f);
+                renderer.setSensorInput(x, y, -y * .65f);
+            } else {
+                gyroX = (gyroX + event.values[1] * .010f) * .992f;
+                gyroY = (gyroY + event.values[0] * .010f) * .992f;
+                renderer.setSensorInput(clamp(gyroX, -1f, 1f), clamp(gyroY, -1f, 1f), 0f);
+            }
+        }
+
+        @Override public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+
+        @Override
+        public void onTouchEvent(MotionEvent event) {
+            renderer.onTouch(event, getResources().getDisplayMetrics().widthPixels);
+            super.onTouchEvent(event);
+        }
+
+        @Override
+        public void onOffsetsChanged(float xOffset, float yOffset, float xOffsetStep, float yOffsetStep, int xPixelOffset, int yPixelOffset) {
+            renderer.setLauncherOffset(xOffset);
+            super.onOffsetsChanged(xOffset, yOffset, xOffsetStep, yOffsetStep, xPixelOffset, yPixelOffset);
+        }
+
+        private float normalize(float angle) {
+            while (angle > Math.PI) angle -= (float) (Math.PI * 2.0);
+            while (angle < -Math.PI) angle += (float) (Math.PI * 2.0);
+            return angle;
         }
 
         private float clamp(float value, float min, float max) {
