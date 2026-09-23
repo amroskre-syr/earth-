@@ -12,6 +12,7 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
+import android.view.Choreographer;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -20,150 +21,143 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
 
-public class MainActivity extends Activity implements SensorEventListener {
-    private EarthView earthView;
+public class MainActivity extends Activity implements SensorEventListener, Choreographer.FrameCallback {
+    private PreviewView preview;
     private SensorManager sensorManager;
-    private Sensor rotationSensor;
-    private Sensor gyroSensor;
-    private boolean usingRotationVector;
-    private final float[] rotationMatrix = new float[9];
+    private Sensor sensor;
+    private boolean gyroFallback;
+    private boolean running;
+    private boolean calibrated;
+    private float neutralPitch;
+    private float neutralRoll;
+    private float gyroX;
+    private float gyroY;
+    private final float[] matrix = new float[9];
     private final float[] orientation = new float[3];
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
         requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
         getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+                View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
 
         FrameLayout root = new FrameLayout(this);
-        earthView = new EarthView();
-        root.addView(earthView, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT));
+        preview = new PreviewView();
+        root.addView(preview, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        Button applyButton = new Button(this);
-        applyButton.setText("تعيين كخلفية متحركة");
-        applyButton.setTextColor(Color.WHITE);
-        applyButton.setTextSize(16f);
-        applyButton.setAllCaps(false);
-        applyButton.setPadding(dp(24), dp(12), dp(24), dp(12));
+        Button apply = new Button(this);
+        apply.setText("تعيين الخلفية المتحركة");
+        apply.setTextColor(Color.WHITE);
+        apply.setTextSize(16f);
+        apply.setAllCaps(false);
+        apply.setPadding(dp(24), dp(12), dp(24), dp(12));
+        GradientDrawable buttonBg = new GradientDrawable();
+        buttonBg.setColor(Color.argb(210, 5, 18, 32));
+        buttonBg.setCornerRadius(dp(26));
+        buttonBg.setStroke(dp(1), Color.argb(180, 88, 170, 235));
+        apply.setBackground(buttonBg);
 
-        GradientDrawable buttonBackground = new GradientDrawable();
-        buttonBackground.setColor(Color.argb(210, 8, 25, 45));
-        buttonBackground.setCornerRadius(dp(24));
-        buttonBackground.setStroke(dp(1), Color.argb(190, 102, 191, 255));
-        applyButton.setBackground(buttonBackground);
-
-        FrameLayout.LayoutParams buttonParams = new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        buttonParams.bottomMargin = dp(42);
-        root.addView(applyButton, buttonParams);
+        params.bottomMargin = dp(38);
+        root.addView(apply, params);
 
-        applyButton.setOnClickListener(v -> {
+        apply.setOnClickListener(v -> {
             Intent intent = new Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER);
-            intent.putExtra(
-                    WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
+            intent.putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
                     new ComponentName(this, EarthWallpaperService.class));
             startActivity(intent);
         });
 
         setContentView(root);
-
         sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
-        rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
-        gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
-        usingRotationVector = rotationSensor != null;
+        sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
+        if (sensor == null) sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+        if (sensor == null) {
+            sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+            gyroFallback = sensor != null;
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (sensorManager != null) {
-            Sensor sensor = usingRotationVector ? rotationSensor : gyroSensor;
-            if (sensor != null) {
-                sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME);
-            }
-        }
-        if (earthView != null) earthView.setRunning(true);
+        running = true;
+        if (sensor != null) sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME);
+        Choreographer.getInstance().postFrameCallback(this);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        if (sensorManager != null) sensorManager.unregisterListener(this);
-        if (earthView != null) earthView.setRunning(false);
+        running = false;
+        sensorManager.unregisterListener(this);
+        Choreographer.getInstance().removeFrameCallback(this);
+    }
+
+    @Override
+    public void doFrame(long frameTimeNanos) {
+        if (!running) return;
+        preview.invalidate();
+        Choreographer.getInstance().postFrameCallback(this);
     }
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (earthView == null) return;
-
-        if (event.sensor.getType() == Sensor.TYPE_ROTATION_VECTOR) {
-            SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values);
-            SensorManager.getOrientation(rotationMatrix, orientation);
+        if (event.sensor != sensor) return;
+        if (!gyroFallback) {
+            SensorManager.getRotationMatrixFromVector(matrix, event.values);
+            SensorManager.getOrientation(matrix, orientation);
             float pitch = orientation[1];
             float roll = orientation[2];
-            float horizontal = clamp(roll / 0.75f, -1f, 1f);
-            float vertical = clamp(-pitch / 0.75f, -1f, 1f);
-            float zoomSignal = clamp((-pitch * 0.85f) + (Math.abs(roll) * 0.25f), -1f, 1f);
-            earthView.renderer.setSensorInput(horizontal, vertical, zoomSignal);
-        } else if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
-            earthView.renderer.addGyro(event.values[1] * 0.018f, event.values[0] * 0.018f);
+            if (!calibrated) {
+                neutralPitch = pitch;
+                neutralRoll = roll;
+                calibrated = true;
+                return;
+            }
+            float deltaPitch = normalize(pitch - neutralPitch);
+            float deltaRoll = normalize(roll - neutralRoll);
+            preview.renderer.setSensorInput(
+                    clamp(-deltaRoll / .24f, -1f, 1f),
+                    clamp(deltaPitch / .24f, -1f, 1f),
+                    clamp(-deltaPitch / .35f, -1f, 1f));
+        } else {
+            gyroX = (gyroX + event.values[1] * .01f) * .992f;
+            gyroY = (gyroY + event.values[0] * .01f) * .992f;
+            preview.renderer.setSensorInput(clamp(gyroX, -1f, 1f), clamp(gyroY, -1f, 1f), 0f);
         }
     }
 
-    @Override
-    public void onAccuracyChanged(Sensor sensor, int accuracy) {
-    }
+    @Override public void onAccuracyChanged(Sensor sensor, int accuracy) {}
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private float normalize(float angle) {
+        while (angle > Math.PI) angle -= (float) (Math.PI * 2.0);
+        while (angle < -Math.PI) angle += (float) (Math.PI * 2.0);
+        return angle;
     }
 
     private static float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));
     }
 
-    private final class EarthView extends View {
-        private final EarthRenderer renderer = new EarthRenderer(MainActivity.this);
-        private boolean running = true;
-
-        EarthView() {
-            super(MainActivity.this);
-            setFocusable(true);
-        }
-
-        void setRunning(boolean value) {
-            running = value;
-            if (running) postInvalidateOnAnimation();
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            renderer.draw(canvas, getWidth(), getHeight());
-            if (running) postInvalidateOnAnimation();
-        }
-
-        @Override
-        public boolean onTouchEvent(MotionEvent event) {
+    private final class PreviewView extends View {
+        final EarthRenderer renderer = new EarthRenderer(MainActivity.this);
+        PreviewView() { super(MainActivity.this); }
+        @Override protected void onDraw(Canvas canvas) { renderer.draw(canvas, getWidth(), getHeight()); }
+        @Override public boolean onTouchEvent(MotionEvent event) {
             boolean handled = renderer.onTouch(event, getWidth());
             if (event.getActionMasked() == MotionEvent.ACTION_UP) performClick();
             return handled || super.onTouchEvent(event);
         }
-
-        @Override
-        public boolean performClick() {
-            super.performClick();
-            return true;
-        }
+        @Override public boolean performClick() { super.performClick(); return true; }
     }
 }
