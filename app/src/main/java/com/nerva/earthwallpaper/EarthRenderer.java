@@ -2,6 +2,7 @@ package com.nerva.earthwallpaper;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -24,12 +25,17 @@ final class EarthRenderer {
     private final long startTime = System.currentTimeMillis();
 
     EarthRenderer(Context context) {
-        background = AssetData.decode(SpaceBgData.DATA);
-        earthFrames[0] = AssetData.decode(Earth0Data.DATA);
-        earthFrames[1] = AssetData.decode(Earth1Data.DATA);
-        earthFrames[2] = AssetData.decode(Earth2Data.DATA);
-        earthFrames[3] = AssetData.decode(Earth3Data.DATA);
-        earthFrames[4] = AssetData.decode(Earth4Data.DATA);
+        background = BitmapFactory.decodeResource(context.getResources(), R.drawable.space_bg);
+        int[] ids = {
+                R.drawable.earth_0,
+                R.drawable.earth_1,
+                R.drawable.earth_2,
+                R.drawable.earth_3,
+                R.drawable.earth_4
+        };
+        for (int i = 0; i < ids.length; i++) {
+            earthFrames[i] = BitmapFactory.decodeResource(context.getResources(), ids[i]);
+        }
     }
 
     void setTilt(float x, float y) {
