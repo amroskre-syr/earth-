@@ -46,6 +46,9 @@ public class EarthWallpaperService extends WallpaperService {
         public void onVisibilityChanged(boolean value) {
             visible = value;
             if (value) {
+                calibrated = false;
+                gyroX = 0f;
+                gyroY = 0f;
                 if (sensor != null) {
                     sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME);
                 }
@@ -80,11 +83,14 @@ public class EarthWallpaperService extends WallpaperService {
         public void doFrame(long frameTimeNanos) {
             framePosted = false;
             if (!visible) return;
+
             SurfaceHolder holder = getSurfaceHolder();
             Canvas canvas = null;
             try {
                 canvas = holder.lockCanvas();
-                if (canvas != null) renderer.draw(canvas, canvas.getWidth(), canvas.getHeight());
+                if (canvas != null) {
+                    renderer.draw(canvas, canvas.getWidth(), canvas.getHeight());
+                }
             } finally {
                 if (canvas != null) holder.unlockCanvasAndPost(canvas);
             }
@@ -94,17 +100,20 @@ public class EarthWallpaperService extends WallpaperService {
         @Override
         public void onSensorChanged(SensorEvent event) {
             if (event.sensor != sensor) return;
+
             if (!gyroFallback) {
                 SensorManager.getRotationMatrixFromVector(matrix, event.values);
                 SensorManager.getOrientation(matrix, orientation);
                 float pitch = orientation[1];
                 float roll = orientation[2];
+
                 if (!calibrated) {
                     neutralPitch = pitch;
                     neutralRoll = roll;
                     calibrated = true;
                     return;
                 }
+
                 float deltaPitch = normalize(pitch - neutralPitch);
                 float deltaRoll = normalize(roll - neutralRoll);
                 float x = clamp(-deltaRoll / .24f, -1f, 1f);
@@ -113,11 +122,16 @@ public class EarthWallpaperService extends WallpaperService {
             } else {
                 gyroX = (gyroX + event.values[1] * .010f) * .992f;
                 gyroY = (gyroY + event.values[0] * .010f) * .992f;
-                renderer.setSensorInput(clamp(gyroX, -1f, 1f), clamp(gyroY, -1f, 1f), 0f);
+                renderer.setSensorInput(
+                        clamp(gyroX, -1f, 1f),
+                        clamp(gyroY, -1f, 1f),
+                        0f);
             }
         }
 
-        @Override public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+        @Override
+        public void onAccuracyChanged(Sensor sensor, int accuracy) {
+        }
 
         @Override
         public void onTouchEvent(MotionEvent event) {
@@ -126,9 +140,22 @@ public class EarthWallpaperService extends WallpaperService {
         }
 
         @Override
-        public void onOffsetsChanged(float xOffset, float yOffset, float xOffsetStep, float yOffsetStep, int xPixelOffset, int yPixelOffset) {
+        public void onOffsetsChanged(
+                float xOffset,
+                float yOffset,
+                float xOffsetStep,
+                float yOffsetStep,
+                int xPixelOffset,
+                int yPixelOffset
+        ) {
             renderer.setLauncherOffset(xOffset);
-            super.onOffsetsChanged(xOffset, yOffset, xOffsetStep, yOffsetStep, xPixelOffset, yPixelOffset);
+            super.onOffsetsChanged(
+                    xOffset,
+                    yOffset,
+                    xOffsetStep,
+                    yOffsetStep,
+                    xPixelOffset,
+                    yPixelOffset);
         }
 
         private float normalize(float angle) {
