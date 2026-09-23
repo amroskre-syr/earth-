@@ -13,7 +13,7 @@ FRAME = 768
 RADIUS = 382
 FRAME_COUNT = 72
 BASE_LONGITUDE = -132.0
-TILT_DEG = -16.0
+TILT_DEG = -10.0
 
 SURFACE_URLS = [
     'https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_2048.jpg',
@@ -28,7 +28,7 @@ def download_first(urls, mode='RGB'):
     last = None
     for url in urls:
         try:
-            req = Request(url, headers={'User-Agent': 'NervaEarthLive/3.0'})
+            req = Request(url, headers={'User-Agent': 'NervaEarthLive/3.1'})
             with urlopen(req, timeout=90) as r:
                 data = r.read()
             image = Image.open(BytesIO(data)).convert(mode)
@@ -79,15 +79,15 @@ def make_space_background():
     yy, xx = np.mgrid[0:BG_H, 0:BG_W]
 
     img = np.zeros((BG_H, BG_W, 3), dtype=np.float32)
-    img[..., 0] = 1.1
-    img[..., 1] = 4.0
-    img[..., 2] = 7.0
+    img[..., 0] = 1.2
+    img[..., 1] = 4.2
+    img[..., 2] = 7.4
 
     band = np.exp(-((yy - (0.56 * xx + BG_H * 0.18)) / 235.0) ** 2)
     band *= 0.55 + 0.45 * np.sin((xx + yy) / 310.0) ** 2
-    img[..., 0] += band * 2.2
-    img[..., 1] += band * 4.0
-    img[..., 2] += band * 5.7
+    img[..., 0] += band * 3.4
+    img[..., 1] += band * 5.7
+    img[..., 2] += band * 8.0
 
     for cx, cy, sx, sy, strength in [
         (BG_W * .16, BG_H * .73, 240, 330, 4.0),
@@ -103,7 +103,7 @@ def make_space_background():
     base = Image.fromarray(np.uint8(np.clip(img, 0, 255)), 'RGB')
     draw = ImageDraw.Draw(base)
 
-    for _ in range(520):
+    for _ in range(760):
         x = int(rng.integers(0, BG_W))
         y = int(rng.integers(0, BG_H))
         b = int(rng.integers(90, 205))
@@ -183,32 +183,41 @@ def project_earth(surface_tex, longitude_deg):
     rgb = bilinear_sample(tex, u, v)
 
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-    ocean = (b > 48) & (b > r * 1.16) & (b > g * 1.05)
-    rgb[..., 0] = np.where(ocean, r * .82, r)
-    rgb[..., 1] = np.where(ocean, g * 1.09, g)
-    rgb[..., 2] = np.where(ocean, b * 1.08, b)
+    ocean = (b > 42) & (b > r * 1.12) & (b > g * 1.03)
+
+    # Match the reference's softer teal-blue Pacific instead of pure navy.
+    rgb[..., 0] = np.where(ocean, np.maximum(r * .90, b * .22), r)
+    rgb[..., 1] = np.where(ocean, np.maximum(g * 1.02, b * .68), g)
+    rgb[..., 2] = np.where(ocean, b * 1.02, b)
 
     light = np.array([0.53, 0.29, 0.80], dtype=np.float32)
     light /= np.linalg.norm(light)
     ndotl = np.clip(X * light[0] + Y * light[1] + Z * light[2], 0, 1)
-    shade = 0.115 + 0.94 * np.power(ndotl, 0.60)
-    shade *= 0.88 + 0.12 * np.power(np.clip(Z, 0, 1), 0.45)
+    shade = 0.145 + 0.93 * np.power(ndotl, 0.60)
+    shade *= 0.89 + 0.11 * np.power(np.clip(Z, 0, 1), 0.45)
     rgb *= shade[..., None]
 
-    spec = np.power(ndotl, 18.0) * ocean * 13.0
+    spec = np.power(ndotl, 18.0) * ocean * 10.0
     rgb[..., 0] += spec * .40
     rgb[..., 1] += spec * .75
     rgb[..., 2] += spec
 
     rim = np.power(np.clip(1.0 - Z, 0, 1), 3.2) * mask
-    rgb[..., 1] += rim * 10
-    rgb[..., 2] += rim * 20
+    rgb[..., 1] += rim * 8
+    rgb[..., 2] += rim * 16
 
     alpha = np.uint8(mask * 255)
     rgba = np.dstack([np.uint8(np.clip(rgb, 0, 255)), alpha])
     image = Image.fromarray(rgba, 'RGBA')
-    image = ImageEnhance.Color(image).enhance(1.05)
-    return ImageEnhance.Contrast(image).enhance(1.025)
+
+    # Preserve alpha while applying a very mild photographic grade.
+    alpha_channel = image.getchannel('A')
+    rgb_image = image.convert('RGB')
+    rgb_image = ImageEnhance.Color(rgb_image).enhance(0.98)
+    rgb_image = ImageEnhance.Contrast(rgb_image).enhance(1.015)
+    image = rgb_image.convert('RGBA')
+    image.putalpha(alpha_channel)
+    return image
 
 
 def project_clouds(cloud_luma, longitude_deg):
@@ -227,12 +236,12 @@ def project_clouds(cloud_luma, longitude_deg):
     alpha = lum * (0.45 + 0.55 * ndotl)
     alpha *= np.power(np.clip(Z, 0, 1), 0.18)
     alpha *= mask
-    alpha = np.uint8(np.clip(alpha, 0, 1) * 205)
+    alpha = np.uint8(np.clip(alpha, 0, 1) * 215)
 
     cloud_rgb = np.zeros((FRAME, FRAME, 3), dtype=np.uint8)
-    cloud_rgb[..., 0] = 220
-    cloud_rgb[..., 1] = 234
-    cloud_rgb[..., 2] = 244
+    cloud_rgb[..., 0] = 232
+    cloud_rgb[..., 1] = 242
+    cloud_rgb[..., 2] = 248
     return Image.fromarray(np.dstack([cloud_rgb, alpha]), 'RGBA')
 
 
